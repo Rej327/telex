@@ -1,0 +1,19 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env.local
+    restart: always
+
+  # Optional: Migration runner using Supabase CLI
+  # migrations:
+  #   image: supabase/cli:latest
+  #   volumes:
+  #     - ./supabase:/supabase
+  #   environment:
+  #     - SUPABASE_ACCESS_TOKEN=${SUPABASE_ACCESS_TOKEN}
+  #   command: db push --project-ref ${SUPABASE_PROJECT_ID}
