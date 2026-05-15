@@ -13,7 +13,7 @@ interface MonitoringTableProps {
   onUpdate: (id: string, field: keyof CallLog, value: string | number) => void;
   onDelete: (id: string) => void;
   isPrivacyMode?: boolean;
-  currentUser: "cly" | "ann";
+  currentUser: string;
 }
 
 

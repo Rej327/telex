@@ -1,6 +1,8 @@
 "use client";
 
 import React, { useState, useEffect, startTransition } from 'react';
+import { verifyPassword } from '@/app/auth/actions';
+
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, AlertTriangle, ShieldCheck } from 'lucide-react';
 
@@ -27,10 +29,12 @@ export const Modal: React.FC<ModalProps> = ({
   cancelText = "Cancel",
   isDestructive = true,
   requirePassword = false,
-  correctPassword = "clyanntelex"
+  correctPassword // No longer strictly needed for default
 }) => {
   const [password, setPassword] = useState("");
   const [isError, setIsError] = useState(false);
+  const [isVerifying, setIsVerifying] = useState(false);
+
 
   // Reset state when modal closes/opens
   useEffect(() => {
@@ -42,14 +46,21 @@ export const Modal: React.FC<ModalProps> = ({
     }
   }, [isOpen]);
 
-  const handleConfirm = () => {
-    if (requirePassword && password !== correctPassword) {
-      setIsError(true);
-      return;
+  const handleConfirm = async () => {
+    if (requirePassword) {
+      setIsVerifying(true);
+      const isValid = await verifyPassword(password);
+      setIsVerifying(false);
+      
+      if (!isValid) {
+        setIsError(true);
+        return;
+      }
     }
     onConfirm();
     onClose();
   };
+
 
   return (
     <AnimatePresence>
@@ -117,15 +128,17 @@ export const Modal: React.FC<ModalProps> = ({
                 <div className="flex flex-col w-full gap-3">
                   <button
                     onClick={handleConfirm}
-                    disabled={requirePassword && password !== correctPassword}
+                    disabled={requirePassword && (!password || isVerifying)}
                     className={`w-full py-4 px-6 rounded-2xl text-white font-bold text-sm transition-all active:scale-95 shadow-lg disabled:opacity-30 disabled:pointer-events-none ${
+
                       isDestructive 
                         ? 'bg-red-600 hover:bg-red-700 shadow-red-200' 
                         : 'bg-green-600 hover:bg-green-700 shadow-green-200'
                     }`}
                   >
-                    {confirmText}
+                    {isVerifying ? "Verifying..." : confirmText}
                   </button>
+
                   
                   <button
                     onClick={onClose}

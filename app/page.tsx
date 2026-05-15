@@ -4,7 +4,6 @@ import React, {
   useState,
   useEffect,
   useSyncExternalStore,
-  startTransition,
   useMemo,
   useCallback,
 } from "react";
@@ -12,9 +11,11 @@ import { MonitoringTable } from "@/components/MonitoringTable";
 import { AddEntry } from "@/components/AddEntry";
 import { Modal } from "@/components/Modal";
 import { NavShell } from "@/components/NavShell";
+import { UserManagement } from "@/components/UserManagement";
 import { DashboardStats } from "@/components/DashboardStats";
 import { RequestCounter } from "@/components/RequestCounter";
-import { LogoutConfirmModal } from "@/components/LogoutConfirmModal";
+import { Archive } from "@/components/Archive";
+
 import { TermsModal } from "@/components/TermsModal";
 import { SecurityGuard } from "@/components/SecurityGuard";
 import { CallLog } from "@/types";
@@ -27,34 +28,30 @@ import {
 } from "@/lib/utils";
 import {
   Download,
-  Hotel,
-  Trash2,
   Plus,
-  RefreshCcw,
   Copy,
   Check,
-  LogOut,
   MessageCircle,
-  BarChart3,
-  TrendingUp,
-  Users,
-  Clock,
   FileText,
+  Clock,
+  Loader2,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { Toaster, toast } from "sonner";
 import { PrivacyModal } from "@/components/PrivacyModal";
-import { 
-  getLogs, 
-  addLog, 
-  updateLog, 
-  deleteLog, 
-  clearAllLogs, 
-  getSettings, 
+import {
+  getLogs,
+  addLog,
+  updateLog,
+  deleteLog,
+  clearAllLogs,
+  getSettings,
   updateSettings,
-  getCurrentUser 
+  getCurrentUser,
+  getOrCreateDateSession,
 } from "./actions";
 import { logout as authLogout } from "@/app/auth/actions";
+import { motion } from "framer-motion";
 
 const subscribe = () => () => {};
 const getSnapshot = () => true;
@@ -66,26 +63,36 @@ export default function Home() {
     getSnapshot,
     getServerSnapshot,
   );
+
   const [activeTab, setActiveTab] = useState<
-    "monitoring" | "dashboard" | "counter"
+    "monitoring" | "dashboard" | "counter" | "users" | "archive"
   >("monitoring");
 
   const [logs, setLogs] = useState<CallLog[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
-  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [filterType, setFilterType] = useState<"all" | "undelivered">("all");
+
   const [copySuccess, setCopySuccess] = useState(false);
   const [viberCopySuccess, setViberCopySuccess] = useState(false);
+  const [excelCopySuccess, setExcelCopySuccess] = useState(false);
   const [countsCopySuccess, setCountsCopySuccess] = useState(false);
-  const [notepadCopySuccess, setNotepadCopySuccess] = useState(false);
-  const [filterType, setFilterType] = useState<"all" | "undelivered">("all");
 
   const [showTerms, setShowTerms] = useState(false);
   const [isPrivacyMode, setIsPrivacyMode] = useState(false);
   const [showPrivacyModal, setShowPrivacyModal] = useState(false);
-  const [searchTerm, setSearchTerm] = useState("");
-  const [profile, setProfile] = useState<{ id: string, email: string, username: string } | null>(null);
+  const [profile, setProfile] = useState<{
+    id: string;
+    email: string;
+    username: string;
+    type: "dev" | "manager" | "telex";
+    status: "unverified" | "verified";
+  } | null>(null);
 
+  const [sessionDate, setSessionDate] = useState("");
+  const [sessionShift, setSessionShift] = useState<"AM" | "PM" | "">("");
+  const [currentDateId, setCurrentDateId] = useState<string | null>(null);
+  const [isSessionLoading, setIsSessionLoading] = useState(false);
 
   // Persistence Logic
   const togglePrivacyMode = useCallback(async (val: boolean) => {
@@ -103,39 +110,78 @@ export default function Home() {
     if (!isClient) return;
 
     const loadData = async () => {
+      const savedDate = localStorage.getItem('telex_session_date') || new Date().toISOString().split('T')[0];
+      const savedShift = localStorage.getItem('telex_session_shift') || (new Date().getHours() < 15 ? 'AM' : 'PM');
+      
+      setSessionDate(savedDate);
+      setSessionShift(savedShift as any);
+
       const [dbLogs, dbSettings, dbProfile] = await Promise.all([
-        getLogs(),
+        getLogs(savedDate, savedShift),
         getSettings(),
-        getCurrentUser()
+        getCurrentUser(),
       ]);
 
-      if (dbLogs) {
-        setLogs(dbLogs);
-      }
-
+      if (dbLogs) setLogs(dbLogs);
       if (dbSettings) {
         setIsPrivacyMode(dbSettings.privacy_mode);
         setShowTerms(!dbSettings.terms_accepted);
       }
-
-      if (dbProfile) {
-        setProfile(dbProfile);
-      }
+      if (dbProfile) setProfile(dbProfile);
     };
 
     loadData();
   }, [isClient]);
 
+  // Initial Client-only state
+  useEffect(() => {
+    const savedDate = localStorage.getItem("telex_session_date");
+    const savedShift = localStorage.getItem("telex_session_shift");
+
+    if (savedDate) setSessionDate(savedDate);
+    else setSessionDate(new Date().toISOString().split("T")[0]);
+
+    if (savedShift) setSessionShift(savedShift as any);
+    else setSessionShift(new Date().getHours() < 15 ? "AM" : "PM");
+  }, []);
+
+  // Session Sync & Persist
+  useEffect(() => {
+    if (!profile || !sessionDate || !sessionShift) return;
+
+    localStorage.setItem("telex_session_date", sessionDate);
+    localStorage.setItem("telex_session_shift", sessionShift);
+
+    const syncSession = async () => {
+      setIsSessionLoading(true);
+      try {
+        const dateId = await getOrCreateDateSession(
+          sessionDate,
+          sessionShift as "AM" | "PM",
+        );
+        setCurrentDateId(dateId);
+        
+        // Re-fetch logs for this session
+        const dbLogs = await getLogs(sessionDate, sessionShift);
+        if (dbLogs) setLogs(dbLogs);
+      } catch (error) {
+        toast.error("Failed to sync session");
+      } finally {
+        setIsSessionLoading(false);
+      }
+    };
+
+    syncSession();
+  }, [sessionDate, sessionShift, profile]);
+
   const filteredLogs = useMemo(() => {
     return logs.filter((log) => {
       const matchesFilter =
         filterType === "all" || (log.callType === "guest" && !log.remarks);
-
       const matchesSearch =
         log.roomNo.toLowerCase().includes(searchTerm.toLowerCase()) ||
         log.lastName.toLowerCase().includes(searchTerm.toLowerCase()) ||
         log.guestReq.toLowerCase().includes(searchTerm.toLowerCase());
-
       return matchesFilter && matchesSearch;
     });
   }, [logs, filterType, searchTerm]);
@@ -146,16 +192,13 @@ export default function Home() {
     const undeliveredCount = logs.filter(
       (l) => l.callType === "guest" && !l.remarks,
     ).length;
-
     const typeCounts: Record<string, number> = {};
     logs.forEach((log) => {
       const type = log.callType || "guest";
       typeCounts[type] = (typeCounts[type] || 0) + 1;
     });
-
     const avgRequests =
       uniqueRooms > 0 ? (totalLogs / uniqueRooms).toFixed(1) : "0.0";
-
     return {
       totalLogs,
       uniqueRooms,
@@ -176,20 +219,15 @@ export default function Home() {
       },
       {} as Record<string, CallLog[]>,
     );
+
     Object.entries(logsByType).forEach(([type, typeLogs]) => {
       counts[type] = parseGuestRequests(typeLogs);
     });
     return counts;
   }, [filteredLogs]);
 
-
   const handleAdd = useCallback(
-    async (
-      newEntry: Omit<
-        CallLog,
-        "id" | "followUp" | "timeOfRequest" | "acknowledgedBy" | "createdAt"
-      >,
-    ) => {
+    async (newEntry: any) => {
       const id = crypto.randomUUID();
       const log: CallLog = {
         ...newEntry,
@@ -200,22 +238,19 @@ export default function Home() {
         acknowledgedBy: "",
         createdAt: Date.now(),
         callType: newEntry.callType || "guest",
+        userId: profile?.id,
+        dateId: currentDateId,
       };
-      
-      // Optimistic update
+
       setLogs((prev) => [...prev, log]);
-      
       try {
-        await addLog(log);
-        toast.success(`Entry added for RM ${log.roomNo}`, {
-          description: `${log.lastName} - ${log.guestReq}`,
-        });
+        await addLog(log, sessionDate, sessionShift as any);
+        toast.success(`Entry added for RM ${log.roomNo}`);
       } catch (error) {
         toast.error("Failed to save to database");
-        // Rollback? Or just let it be out of sync until reload
       }
     },
-    [],
+    [profile, sessionDate, sessionShift, currentDateId],
   );
 
   const handleUpdate = useCallback(
@@ -239,10 +274,7 @@ export default function Home() {
       if (updatedLogValue) {
         try {
           await updateLog(id, { [field]: value });
-          toast.success("Updated", {
-            description: `Field '${field}' updated successfully.`,
-            duration: 2000,
-          });
+          toast.success("Updated");
         } catch (error) {
           toast.error("Failed to update database");
         }
@@ -255,34 +287,25 @@ export default function Home() {
     setLogs([]);
     setIsPrivacyMode(false);
     setShowTerms(true);
-    
     try {
       await clearAllLogs();
       await updateSettings({ privacy_mode: false, terms_accepted: false });
       setIsModalOpen(false);
-      toast.error("System Reset", {
-        description:
-          "All data, settings, and logs have been permanently removed.",
-      });
+      toast.error("System Reset");
     } catch (error) {
       toast.error("Failed to reset system data");
     }
   }, []);
 
-  const handleConfirmDelete = useCallback(async () => {
-    if (deleteId) {
-      const targetId = deleteId;
-      setLogs((prev) => prev.filter((l) => l.id !== targetId));
-      setDeleteId(null);
-      
-      try {
-        await deleteLog(targetId);
-        toast.info("Entry deleted");
-      } catch (error) {
-        toast.error("Failed to delete from database");
-      }
+  const handleDelete = useCallback(async (id: string) => {
+    setLogs((prev) => prev.filter((l) => l.id !== id));
+    try {
+      await deleteLog(id);
+      toast.info("Entry deleted");
+    } catch (error) {
+      toast.error("Failed to delete from database");
     }
-  }, [deleteId]);
+  }, []);
 
   const exportToExcel = useCallback(() => {
     if (logs.length === 0) return;
@@ -306,8 +329,6 @@ export default function Home() {
     );
   }, [logs]);
 
-  const [excelCopySuccess, setExcelCopySuccess] = useState(false);
-
   const copyExcel = useCallback(() => {
     if (logs.length === 0) return;
     const rows = logs
@@ -316,12 +337,9 @@ export default function Home() {
           `${log.requestedBy}\t${log.lastName}\t${log.roomNo}\t${log.guestReq}\t${log.timeOfRequest}\t${log.timeOfDelivered}\t${log.remarks}\t${log.followUp}`,
       )
       .join("\n");
-
     navigator.clipboard.writeText(rows).then(() => {
       setExcelCopySuccess(true);
-      toast.success("Excel Format Copied", {
-        description: "Full row data copied (no headers).",
-      });
+      toast.success("Excel Format Copied");
       setTimeout(() => setExcelCopySuccess(false), 2000);
     });
   }, [logs]);
@@ -332,14 +350,10 @@ export default function Home() {
         (log) =>
           `${formatFullTimestamp(new Date(log.createdAt))} hi ${log.roomNo} ${log.lastName} ${log.guestReq}`,
       )
-
-
       .join("\n");
     navigator.clipboard.writeText(text).then(() => {
       setCopySuccess(true);
-      toast.success("Copied to Notepad", {
-        description: "Table data copied in Notepad format.",
-      });
+      toast.success("Copied to Notepad");
       setTimeout(() => setCopySuccess(false), 2000);
     });
   }, [logs]);
@@ -349,21 +363,15 @@ export default function Home() {
     const text = guestLogs
       .map(
         (log) =>
-          `hi ${log.roomNo} ${log.lastName} ${log.guestReq} ${log.remarks} // ${(profile?.username || 'ADMIN').toUpperCase()}`,
+          `hi ${log.roomNo} ${log.lastName} ${log.guestReq} ${log.remarks} // ${(profile?.username || "ADMIN").toUpperCase()}`,
       )
-
-
-
       .join("\n");
     navigator.clipboard.writeText(text).then(() => {
       setViberCopySuccess(true);
-      toast.success("Copied to Viber", {
-        description: "Guest requests copied for Viber template.",
-      });
+      toast.success("Copied to Viber");
       setTimeout(() => setViberCopySuccess(false), 2000);
     });
-  }, [logs, currentUser]);
-
+  }, [logs, profile]);
 
   const copyTotals = useCallback(() => {
     const typeLabels: Record<string, string> = {
@@ -395,12 +403,52 @@ export default function Home() {
   }, []);
 
   if (!isClient) return null;
+  if (!profile) return null;
+
+  if (profile.status === "unverified") {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 text-center">
+        <motion.div
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="bg-white p-12 rounded-[3rem] shadow-[0_20px_60px_rgba(0,0,0,0.05)] border border-slate-100 max-w-md w-full"
+        >
+          <div className="w-24 h-24 bg-amber-50 rounded-full flex items-center justify-center mx-auto mb-8">
+            <Plus className="text-amber-500 w-12 h-12 rotate-45" />
+          </div>
+          <h1 className="text-3xl font-black text-slate-900 mb-4 tracking-tight">
+            Account Pending
+          </h1>
+          <p className="text-slate-500 font-medium leading-relaxed mb-8">
+            Welcome,{" "}
+            <span className="text-slate-900 font-bold">{profile.username}</span>
+            . Your account is currently waiting to be verified by a Duty
+            Manager.
+          </p>
+          <div className="space-y-4">
+            <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">
+                Status
+              </p>
+              <p className="text-amber-600 font-bold uppercase text-xs tracking-tighter">
+                Waiting for Approval
+              </p>
+            </div>
+            <button
+              onClick={handleLogout}
+              className="w-full py-4 text-slate-400 font-bold hover:text-red-500 transition-colors"
+            >
+              Sign Out
+            </button>
+          </div>
+        </motion.div>
+      </div>
+    );
+  }
 
   return (
     <>
       <Toaster position="top-right" richColors />
-
-
       <SecurityGuard
         isPrivacyMode={isPrivacyMode}
         onDisablePrivacy={() => togglePrivacyMode(false)}
@@ -408,7 +456,7 @@ export default function Home() {
         <NavShell
           activeTab={activeTab}
           setActiveTab={setActiveTab}
-          onLogout={() => setIsLogoutModalOpen(true)}
+          onLogout={handleLogout}
           onReset={() => setIsModalOpen(true)}
           isPrivacyMode={isPrivacyMode}
           setIsPrivacyMode={(val) => {
@@ -417,15 +465,11 @@ export default function Home() {
           }}
           profile={profile}
         >
-
           <div className="p-4 md:p-8 w-auto mx-auto space-y-8 animate-in fade-in duration-500">
-
-
-
             {activeTab === "dashboard" && (
               <div className="space-y-8">
                 <header>
-                  <h1 className="text-3xl font-black text-slate-800">
+                  <h1 className="text-3xl font-black text-slate-800 uppercase tracking-tight">
                     Operational Overview
                   </h1>
                   <p className="text-muted-foreground font-medium">
@@ -436,6 +480,8 @@ export default function Home() {
               </div>
             )}
 
+            {activeTab === "archive" && <Archive />}
+
             {activeTab === "counter" && (
               <RequestCounter
                 countsByType={guestRequestCountsByType}
@@ -444,15 +490,82 @@ export default function Home() {
               />
             )}
 
+            {activeTab === "users" && <UserManagement />}
+
             {activeTab === "monitoring" && (
               <div className="space-y-8">
+                {/* Session Manager */}
+                <div className="bg-white p-6 rounded-[2.5rem] border border-slate-100 shadow-sm flex flex-col md:flex-row items-center justify-between gap-6">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 bg-indigo-50 rounded-2xl flex items-center justify-center text-indigo-500">
+                      <Clock size={24} />
+                    </div>
+                    <div>
+                      <h3 className="font-black text-slate-900 leading-none mb-1 uppercase tracking-tight">
+                        Active Session
+                      </h3>
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                        Logs will be saved to this date/shift
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3 bg-slate-50 p-2 rounded-2xl border border-slate-100">
+                    <input
+                      type="date"
+                      value={sessionDate}
+                      onChange={(e) => setSessionDate(e.target.value)}
+                      className="bg-white px-4 py-2 rounded-xl text-xs font-black outline-none border border-slate-100 shadow-sm focus:border-indigo-500/30 transition-all"
+                    />
+                    <div className="h-6 w-px bg-slate-200 mx-1" />
+                    <div className="flex p-1 bg-white rounded-xl border border-slate-100 shadow-sm">
+                      <button
+                        onClick={() => setSessionShift("AM")}
+                        className={cn(
+                          "px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all",
+                          sessionShift === "AM"
+                            ? "bg-amber-500 text-white shadow-lg"
+                            : "text-slate-400 hover:text-slate-600",
+                        )}
+                      >
+                        AM
+                      </button>
+                      <button
+                        onClick={() => setSessionShift("PM")}
+                        className={cn(
+                          "px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all",
+                          sessionShift === "PM"
+                            ? "bg-indigo-600 text-white shadow-lg"
+                            : "text-slate-400 hover:text-slate-600",
+                        )}
+                      >
+                        PM
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {isSessionLoading ? (
+                      <Loader2 className="w-5 h-5 text-indigo-500 animate-spin" />
+                    ) : currentDateId ? (
+                      <div className="flex items-center gap-2 px-4 py-2 bg-green-50 text-green-600 rounded-xl text-[10px] font-black uppercase tracking-widest border border-green-100">
+                        <Check size={14} />
+                        Synced
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2 px-4 py-2 bg-amber-50 text-amber-600 rounded-xl text-[10px] font-black uppercase tracking-widest border border-amber-100">
+                        Connecting...
+                      </div>
+                    )}
+                  </div>
+                </div>
+
                 <div className="flex flex-col lg:flex-row items-center justify-between gap-4 mb-4">
                   <div className="flex items-center gap-2 text-sm font-black text-primary uppercase tracking-widest">
                     <Plus size={16} strokeWidth={3} />
                     Quick Add Log
                   </div>
                 </div>
-
 
                 <div className="flex flex-col lg:flex-row gap-6">
                   <div className="flex-1 bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm">
@@ -510,8 +623,8 @@ export default function Home() {
                         className={cn(
                           "flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl transition-all font-bold text-[10px] uppercase tracking-widest",
                           excelCopySuccess
-                            ? "bg-emerald-500 text-white shadow-lg shadow-emerald-500/20"
-                            : "bg-emerald-600 text-white hover:bg-emerald-700 shadow-md shadow-emerald-600/10",
+                            ? "bg-emerald-500 text-white shadow-lg"
+                            : "bg-emerald-600 text-white hover:bg-emerald-700 shadow-md",
                         )}
                       >
                         {excelCopySuccess ? (
@@ -526,8 +639,8 @@ export default function Home() {
                         className={cn(
                           "flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl transition-all font-bold text-[10px] uppercase tracking-widest",
                           copySuccess
-                            ? "bg-slate-800 text-white shadow-lg shadow-slate-800/20"
-                            : "bg-slate-700 text-white hover:bg-slate-800 shadow-md shadow-slate-700/10",
+                            ? "bg-slate-800 text-white shadow-lg"
+                            : "bg-slate-700 text-white hover:bg-slate-800 shadow-md",
                         )}
                       >
                         {copySuccess ? <Check size={14} /> : <Copy size={14} />}
@@ -540,8 +653,8 @@ export default function Home() {
                         className={cn(
                           "flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl transition-all font-bold text-[10px] uppercase tracking-widest",
                           viberCopySuccess
-                            ? "bg-[#7360f2] text-white shadow-lg shadow-[#7360f2]/20"
-                            : "bg-[#6251d1] text-white hover:bg-[#5241b1] shadow-md shadow-[#6251d1]/10",
+                            ? "bg-[#7360f2] text-white shadow-lg"
+                            : "bg-[#6251d1] text-white hover:bg-[#5241b1] shadow-md",
                         )}
                       >
                         {viberCopySuccess ? (
@@ -553,7 +666,7 @@ export default function Home() {
                       </button>
                       <button
                         onClick={exportToExcel}
-                        className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-primary text-white rounded-xl hover:bg-primary/90 transition-all font-bold text-[10px] uppercase tracking-widest shadow-lg shadow-primary/20"
+                        className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-primary text-white rounded-xl hover:bg-primary/90 transition-all font-bold text-[10px] uppercase tracking-widest shadow-lg"
                       >
                         <Download size={14} />
                         File
@@ -565,11 +678,10 @@ export default function Home() {
                 <MonitoringTable
                   data={filteredLogs}
                   onUpdate={handleUpdate}
-                  onDelete={setDeleteId}
+                  onDelete={handleDelete}
                   isPrivacyMode={isPrivacyMode}
-                  currentUser={profile?.username || 'admin'}
+                  currentUser={profile?.username || "admin"}
                 />
-
               </div>
             )}
 
@@ -590,21 +702,6 @@ export default function Home() {
         requirePassword={true}
       />
 
-      <Modal
-        isOpen={!!deleteId}
-        onClose={() => setDeleteId(null)}
-        onConfirm={handleConfirmDelete}
-        title="Delete Entry?"
-        message="Are you sure you want to remove this log?"
-        confirmText="Delete"
-        requirePassword={true}
-      />
-
-      <LogoutConfirmModal
-        isOpen={isLogoutModalOpen}
-        onClose={() => setIsLogoutModalOpen(false)}
-        onLogout={handleLogout}
-      />
       <TermsModal isOpen={showTerms} onAccept={handleAcceptTerms} />
       <PrivacyModal
         isOpen={showPrivacyModal}
@@ -614,4 +711,3 @@ export default function Home() {
     </>
   );
 }
-

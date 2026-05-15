@@ -76,3 +76,16 @@ export async function logout() {
   revalidatePath('/', 'layout')
   redirect('/login')
 }
+
+export async function verifyPassword(password: string) {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user || !user.email) return false
+
+  const { error } = await supabase.auth.signInWithPassword({
+    email: user.email,
+    password,
+  })
+
+  return !error
+}

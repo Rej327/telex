@@ -4,9 +4,14 @@ import { createClient } from '@/lib/supabase/server'
 import { CallLog } from '@/types'
 import { revalidatePath } from 'next/cache'
 
-export async function getLogs() {
+export async function getLogs(sessionDate?: string, sessionShift?: string) {
   const supabase = await createClient()
-  const { data, error } = await supabase.rpc('get_call_logs', { input_data: {} })
+  const { data, error } = await supabase.rpc('get_call_logs', {
+    input_data: {
+      session_date: sessionDate,
+      session_shift: sessionShift
+    }
+  })
 
   if (error) {
     console.error('Error fetching logs:', error)
@@ -28,11 +33,11 @@ export async function getLogs() {
     remarks: log.call_logs_remarks,
     createdAt: log.call_logs_created_at,
     userId: log.call_logs_user_id,
-    dateId: log.call_logs_date_id,
+
   })) as CallLog[]
 }
 
-export async function addLog(log: Omit<CallLog, 'id' | 'followUp' | 'timeOfRequest' | 'acknowledgedBy' | 'createdAt'> & { id: string, timeOfRequest: string, createdAt: number, userId?: string, dateId?: string }) {
+export async function addLog(log: CallLog, sessionDate?: string, sessionShift?: string) {
   const supabase = await createClient()
   
   const { error } = await supabase.rpc('create_call_log', {
@@ -48,7 +53,8 @@ export async function addLog(log: Omit<CallLog, 'id' | 'followUp' | 'timeOfReque
       created_at: log.createdAt,
       call_type: log.callType,
       user_id: log.userId,
-      date_id: log.dateId,
+      session_date: sessionDate,
+      session_shift: sessionShift
     }
   })
 
@@ -75,7 +81,7 @@ export async function updateLog(id: string, updates: Partial<CallLog>) {
   if ('acknowledgedBy' in updates) rpcUpdates.acknowledged_by = updates.acknowledgedBy
   if ('callType' in updates) rpcUpdates.call_type = updates.callType
   if ('userId' in updates) rpcUpdates.user_id = updates.userId
-  if ('dateId' in updates) rpcUpdates.date_id = updates.dateId
+
 
   const { error } = await supabase.rpc('update_call_log', {
     input_data: {
@@ -171,7 +177,10 @@ export async function getUserProfile(userId: string) {
     id: data.user_id,
     email: data.user_email,
     username: data.user_username,
+    type: data.user_type as 'dev' | 'manager' | 'telex',
+    status: data.user_status as 'unverified' | 'verified'
   }
+
 }
 
 export async function getCurrentUser() {
@@ -181,4 +190,119 @@ export async function getCurrentUser() {
   return getUserProfile(user.id)
 }
 
+export async function getAllUsers() {
+  const supabase = await createClient()
+  
+  // Verify requester is admin (dev or manager)
+  const profile = await getCurrentUser()
+  if (!profile || (profile.type !== 'dev' && profile.type !== 'manager')) {
+    throw new Error('Unauthorized')
+  }
 
+  const { data, error } = await supabase
+    .from('user_table')
+    .select('*')
+    .order('user_updated_at', { ascending: false })
+
+  if (error) {
+    console.error('Error fetching users:', error)
+    return []
+  }
+
+  return data.map((u: any) => ({
+    id: u.user_id,
+    email: u.user_email,
+    username: u.user_username,
+    type: u.user_type,
+    status: u.user_status
+  }))
+}
+
+export async function verifyUser(userId: string, status: 'verified' | 'unverified') {
+  const supabase = await createClient()
+
+  // Verify requester is admin
+  const profile = await getCurrentUser()
+  if (!profile || (profile.type !== 'dev' && profile.type !== 'manager')) {
+    throw new Error('Unauthorized')
+  }
+
+  const { error } = await supabase
+    .from('user_table')
+    .update({ user_status: status })
+    .eq('user_id', userId)
+
+  if (error) {
+    console.error('Error updating user status:', error)
+    throw new Error('Failed to update user status')
+  }
+
+  revalidatePath('/')
+}
+
+export async function getArchiveLogs() {
+  const supabase = await createClient()
+
+  const { data, error } = await supabase.rpc('get_archive_logs')
+
+  if (error) {
+    console.error('Error fetching archive logs:', error)
+    return []
+  }
+
+  return (data as any[]).map((log: any) => ({
+    id: log.call_logs_id,
+    requestedBy: log.call_logs_requested_by,
+    lastName: log.call_logs_last_name,
+    roomNo: log.call_logs_room_no,
+    guestReq: log.call_logs_guest_req,
+    timeOfRequest: log.call_logs_time_of_request,
+    timeOfDelivered: log.call_logs_time_of_delivered,
+    remarks: log.call_logs_remarks,
+    followUp: log.call_logs_follow_up,
+    acknowledgedBy: log.call_logs_acknowledged_by,
+    createdAt: log.call_logs_created_at,
+    callType: log.call_logs_call_type,
+    userId: log.call_logs_user_id,
+    dateId: log.call_logs_date_id,
+    username: log.user_username,
+    date: log.date_date,
+    shift: log.date_shift
+  }))
+}
+
+
+export async function getOrCreateDateSession(date: string, shift: 'AM' | 'PM') {
+  const supabase = await createClient()
+  const profile = await getCurrentUser()
+  if (!profile) throw new Error('Unauthorized')
+
+  // Check if session exists
+  const { data: existing, error: fetchError } = await supabase
+    .from('date_table')
+    .select('date_id')
+    .eq('date_date', date)
+    .eq('date_shift', shift)
+    .eq('date_user_id', profile.id)
+    .single()
+
+  if (existing) return existing.date_id
+
+  // Create new session
+  const { data: created, error: createError } = await supabase
+    .from('date_table')
+    .insert({
+      date_date: date,
+      date_shift: shift,
+      date_user_id: profile.id
+    })
+    .select('date_id')
+    .single()
+
+  if (createError) {
+    console.error('Error creating date session:', createError)
+    throw new Error('Failed to create session')
+  }
+
+  return created.date_id
+}

@@ -13,19 +13,23 @@ import {
   Users,
   ChevronDown,
   PhoneCall,
+  History,
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
 interface NavShellProps {
   children: React.ReactNode;
-  activeTab: "monitoring" | "dashboard" | "counter";
-  setActiveTab: (tab: "monitoring" | "dashboard" | "counter") => void;
+  activeTab: "monitoring" | "dashboard" | "counter" | "users" | "archive";
+  setActiveTab: (tab: "monitoring" | "dashboard" | "counter" | "users" | "archive") => void;
+
+
   onLogout: () => void;
   onReset: () => void;
   isPrivacyMode: boolean;
   setIsPrivacyMode: (val: boolean) => void;
-  profile: { id: string, username: string } | null;
+  profile: { id: string, username: string, type: 'dev' | 'manager' | 'telex', status: 'unverified' | 'verified' } | null;
+
 }
 
 export const NavShell: React.FC<NavShellProps> = ({
@@ -118,7 +122,37 @@ export const NavShell: React.FC<NavShellProps> = ({
             <BarChart3 size={20} />
             Counter
           </button>
+
+          <button
+            onClick={() => setActiveTab("archive")}
+            className={cn(
+              "w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-bold text-sm",
+              activeTab === "archive"
+                ? "bg-primary/10 text-primary shadow-sm"
+                : "text-slate-500 hover:bg-slate-50",
+            )}
+          >
+            <History size={20} />
+            Archive
+          </button>
+
+          
+          {(profile?.type === 'dev' || profile?.type === 'manager') && (
+            <button
+              onClick={() => setActiveTab("users")}
+              className={cn(
+                "w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-bold text-sm",
+                activeTab === "users"
+                  ? "bg-indigo-500/10 text-indigo-600 shadow-sm"
+                  : "text-slate-500 hover:bg-slate-50",
+              )}
+            >
+              <Users size={20} />
+              User Management
+            </button>
+          )}
         </nav>
+
         <div className="p-4 border-t border-slate-100 space-y-2">
           <button
             onClick={() => setIsPrivacyMode(!isPrivacyMode)}

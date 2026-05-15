@@ -1,6 +1,8 @@
 "use client";
 
 import React, { useState } from 'react';
+import { verifyPassword } from '@/app/auth/actions';
+
 import { motion, AnimatePresence } from 'framer-motion';
 import { Lock, ShieldCheck, X, AlertCircle } from 'lucide-react';
 
@@ -13,10 +15,18 @@ interface PrivacyModalProps {
 export const PrivacyModal: React.FC<PrivacyModalProps> = ({ isOpen, onClose, onConfirm }) => {
   const [password, setPassword] = useState('');
   const [error, setError] = useState(false);
+  const [isVerifying, setIsVerifying] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (password === 'clyanntelex') {
+    if (!password || isVerifying) return;
+    
+    setIsVerifying(true);
+    const isValid = await verifyPassword(password);
+    setIsVerifying(false);
+
+    if (isValid) {
       onConfirm();
       setPassword('');
       setError(false);
@@ -26,6 +36,7 @@ export const PrivacyModal: React.FC<PrivacyModalProps> = ({ isOpen, onClose, onC
       setTimeout(() => setError(false), 2000);
     }
   };
+
 
   return (
     <AnimatePresence>
@@ -100,11 +111,13 @@ export const PrivacyModal: React.FC<PrivacyModalProps> = ({ isOpen, onClose, onC
 
                 <button
                   type="submit"
-                  className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-primary transition-all shadow-lg mt-6 flex items-center justify-center gap-2"
+                  disabled={isVerifying}
+                  className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-primary transition-all shadow-lg mt-6 flex items-center justify-center gap-2 disabled:opacity-50"
                 >
                   <ShieldCheck size={16} />
-                  Authorize
+                  {isVerifying ? "Verifying..." : "Authorize"}
                 </button>
+
               </form>
             </div>
             

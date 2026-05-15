@@ -1,6 +1,8 @@
 "use client";
 
 import React from 'react';
+import { verifyPassword } from '@/app/auth/actions';
+
 import { Download, Copy, LogOut, X, Check, FileText } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -16,7 +18,21 @@ export const LogoutConfirmModal: React.FC<LogoutConfirmModalProps> = ({
   onLogout 
 }) => {
   const [password, setPassword] = React.useState("");
-  const isAuthorized = password === "clyanntelex";
+  const [isVerifying, setIsVerifying] = React.useState(false);
+  const [isAuthorized, setIsAuthorized] = React.useState(false);
+
+  const handlePasswordChange = async (val: string) => {
+    setPassword(val);
+    if (val.length >= 6) { // Optimization: only verify if likely to be a password
+      setIsVerifying(true);
+      const isValid = await verifyPassword(val);
+      setIsAuthorized(isValid);
+      setIsVerifying(false);
+    } else {
+      setIsAuthorized(false);
+    }
+  };
+
 
   return (
     <AnimatePresence>
@@ -33,8 +49,9 @@ export const LogoutConfirmModal: React.FC<LogoutConfirmModalProps> = ({
                 <div className="p-2 rounded-xl bg-red-100 text-red-600">
                   <LogOut size={20} />
                 </div>
-                <h3 className="text-xl font-black text-slate-800 uppercase tracking-tighter">End Shift Session</h3>
+                <h3 className="text-xl font-black text-slate-800 uppercase tracking-tighter">Confirm Logout</h3>
               </div>
+
               <button onClick={onClose} className="p-2 hover:bg-slate-200 rounded-full transition-colors text-slate-400">
                 <X size={20} />
               </button>
@@ -57,7 +74,8 @@ export const LogoutConfirmModal: React.FC<LogoutConfirmModalProps> = ({
                   autoFocus
                   type="password"
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  onChange={(e) => handlePasswordChange(e.target.value)}
+
                   placeholder="Enter Password"
                   className="w-full p-4 rounded-2xl bg-slate-50 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500 transition-all font-bold text-center"
                 />
@@ -80,8 +98,9 @@ export const LogoutConfirmModal: React.FC<LogoutConfirmModalProps> = ({
                     : "bg-slate-200 text-slate-400 cursor-not-allowed shadow-none"
                 }`}
               >
-                Wipe & Logout
+                {isVerifying ? "..." : "Wipe & Logout"}
               </button>
+
             </div>
           </motion.div>
         </div>
